@@ -1,0 +1,16 @@
+# TESTING ONLY. 100% FREE WEB SERVICE.
+# CAUTION: Local account/friend data is temporary and is lost on free-instance spin down.
+services:
+  - type: web
+    name: monster-realm-v26-online
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: echo "No external dependencies"
+    startCommand: node server.mjs
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      - key: DATA_FILE
+        value: /tmp/monster-realm-test/players.json
