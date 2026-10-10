@@ -208,6 +208,21 @@ function beginNextPvpTurn(room,playerId){
     monsterCds[i]=Math.max(0,(Number(monsterCds[i])||0)-1);
   }
 }
+function handlePvpSwitch(playerId,msg){
+  const room=rooms.get(String(msg.roomId||""));
+  if(!room||room.phase!=="battle"||!room.battle||!room.players.includes(playerId))return;
+  const b=room.battle;
+  if(b.winner||b.turn!==playerId){push(playerId,{type:"error",message:"You may only switch during your own turn."});return}
+  const i=Number(msg.monsterIndex);
+  if(!Number.isInteger(i)||i<0||i>=3||!room.teams[playerId]?.[i]||(b.hp[playerId]?.[i]||0)<=0){
+    push(playerId,{type:"error",message:"Select one of your three living monsters."});return;
+  }
+  if(b.active[playerId]===i)return;
+  b.active[playerId]=i;
+  b.lastLog=`${db.players[playerId].name} switched to ${room.teams[playerId][i].name}. Free switch: attack is still available!`;
+  // Intentionally no turn change, no cooldown decrement and no damage.
+  broadcastRoom(room);
+}
 function handlePvpAction(playerId,msg){
   const room=rooms.get(String(msg.roomId||""));if(!room||room.phase!=="battle"||!room.battle)return;
   const b=room.battle;if(b.winner||b.turn!==playerId)return;
@@ -226,11 +241,12 @@ function handlePvpAction(playerId,msg){
   b.hp[other][di]=Math.max(0,b.hp[other][di]-damage);
   b.lastLog=`${db.players[playerId].name}'s ${att.name} used ${skill.name}: ${damage} damage${crit?" CRITICAL!":""}${mult>1?" • SUPER EFFECTIVE":mult<1?" • RESISTED":""}.`;
   if(b.hp[other][di]<=0){
-    b.active[other]=di+1;
-    if(b.active[other]>=room.teams[other].length){
+    const nextAlive=b.hp[other].findIndex(hp=>hp>0);
+    if(nextAlive<0){
       b.winner=playerId;b.turn=null;b.lastLog+=` ${db.players[playerId].name} wins the round!`;
     }else{
-      b.lastLog+=` ${room.teams[other][b.active[other]].name} enters battle.`;
+      b.active[other]=nextAlive;
+      b.lastLog+=` ${room.teams[other][nextAlive].name} enters battle.`;
       b.turn=other;
     }
   }else b.turn=other;
@@ -256,8 +272,8 @@ function leaveRoom(playerId,roomId){
 
 const server=http.createServer(async(req,res)=>{
   if(req.method==="OPTIONS"){sendJson(res,200,{ok:true});return}
-  if(req.method==="GET"&&req.url.split("?")[0]==="/health"){sendJson(res,200,{ok:true,edition:"V27",mode:"Render Free test",rooms:rooms.size,players:Object.keys(db.players).length});return}
-  if(req.method==="GET"&&req.url.split("?")[0]==="/"){sendJson(res,200,{ok:true,service:"Monster Realm V27 PvP server",mode:"test",help:"This URL is a backend API, not the playable CrazyGames website. Try /health."});return}
+  if(req.method==="GET"&&req.url.split("?")[0]==="/health"){sendJson(res,200,{ok:true,edition:"V28",mode:"Render Free test",rooms:rooms.size,players:Object.keys(db.players).length});return}
+  if(req.method==="GET"&&req.url.split("?")[0]==="/"){sendJson(res,200,{ok:true,service:"Monster Realm V28 PvP server",mode:"test",help:"This URL is a backend API, not the playable CrazyGames website. Try /health."});return}
   if(req.method==="GET"||req.method==="HEAD"){serveGame(req,res);return}
   if(req.method!=="POST"){sendJson(res,404,{ok:false,error:"Not found"});return}
   let body={};try{body=await readJson(req)}catch(e){sendJson(res,400,{ok:false,error:"Invalid JSON"});return}
@@ -381,6 +397,7 @@ wss.on("connection",(ws,req)=>{
     try{
       const msg=JSON.parse(String(raw));
       if(msg.type==="pvp_pick")handlePvpPick(p.id,msg);
+      if(msg.type==="pvp_switch")handlePvpSwitch(p.id,msg);
       if(msg.type==="pvp_action")handlePvpAction(p.id,msg);
       if(msg.type==="pvp_rematch")handleRematch(p.id,msg);
       if(msg.type==="room_leave")leaveRoom(p.id,msg.roomId);
@@ -391,4 +408,4 @@ wss.on("connection",(ws,req)=>{
   });
 });
 
-server.listen(PORT,"0.0.0.0",()=>console.log(`Monster Realm V27 ONLINE listening on port ${PORT}`));
+server.listen(PORT,"0.0.0.0",()=>console.log(`Monster Realm V28 ONLINE listening on port ${PORT}`));

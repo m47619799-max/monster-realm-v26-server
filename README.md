@@ -1,22 +1,28 @@
-# Monster Realm V27 – PvP 30-second team selection (Render Free)
+# Monster Realm V28 — Real PvP + Free Switching (Render Free)
 
-This is an **update to the existing V26 GitHub repository**. Do not create a new Render service.
+This V28 update REPLACES the V27 server. Use the existing Render service and GitHub repository; do not create a second service.
 
-1. Open https://github.com/m47619799-max/monster-realm-v26-server
-2. Click **Add file → Upload files**, upload all 6 files in this package at repository root, overwriting the V26 versions. Commit to `main`.
-3. Render automatically deploys from GitHub. Wait until **Live**.
-4. Open https://monster-realm-v26-online.onrender.com/health and verify `"edition":"V27"`.
-5. Then use the separate V27 game ZIP on CrazyGames Preview.
+## Deploy
 
-### PvP rules
+1. Visit https://github.com/m47619799-max/monster-realm-v26-server
+2. Upload all 6 files from this package to the repository root, overwrite the existing files and commit on `main`.
+3. Wait for Render auto-deploy (or inspect Render deployment if it does not trigger).
+4. Visit https://monster-realm-v26-online.onrender.com/health and check `"edition":"V28"`.
+5. Use V28 CrazyGames or V28 Poki game build only after the above update.
 
-- A room starts with one host waiting; the 30-second server-controlled timer starts when a second player joins.
-- Each player has **3 team slots**; choose monsters from up to 500 owned creatures.
-- The server rejects duplicate selections, late selections, and attacks before the prep timer ends.
-- Time ends: teams lock and real turn-based attacks begin automatically.
-- Monster reaches 0 HP: next creature enters. Defeat all 3: win.
-- Skill 1 has no cooldown; skills 2–9 use a 3-turn cooldown.
-- Rematch opens a new 30-second selection period.
-- Works through both room ID and accepted friend challenge.
+## Rules
 
-⚠ Render Free hosts use ephemeral files and may restart/sleep. This is a test deployment, not durable account storage.
+- PvP room starts a server-controlled 30-second team-selection period with exactly 3 monsters per side.
+- After prep, visual 1-vs-1 battles begin; 3 team members remain available.
+- On YOUR turn, you may switch to ANY of your 3 living monsters without spending a turn or affecting ability cooldowns. You can immediately attack after switching.
+- Cannot switch to KO monsters, outside your turn, or after the match ends.
+- When a monster is KO, automatically send another living teammate; match ends only when all 3 faint.
+- Skill 1 has no cooldown, skills 2-9 wait 3 turns.
+- Rematch starts another 30-second team-selection window.
+
+## Notes
+
+- Render Free sleeping/restarts can erase temporary friend accounts stored on its ephemeral filesystem. Use test-only names and passwords.
+- No extra npm dependencies needed. Build command: `echo "No external dependencies"`, start command: `node server.mjs`.
+- The server URL is HTTPS and WebSocket (WSS) enabled by Render.
+- Poki publication may require separate approval for connecting to the external server via Content Security Policy.
