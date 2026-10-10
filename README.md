@@ -1,26 +1,22 @@
-# Monster Realm V26 — Render FREE TEST SERVER
+# Monster Realm V27 – PvP 30-second team selection (Render Free)
 
-**This repository contains the online PvP BACKEND ONLY, not the 400-monster game**.
-The game will be uploaded separately to CrazyGames after the server has a live HTTPS URL.
+This is an **update to the existing V26 GitHub repository**. Do not create a new Render service.
 
-## Deploy for free
+1. Open https://github.com/m47619799-max/monster-realm-v26-server
+2. Click **Add file → Upload files**, upload all 6 files in this package at repository root, overwriting the V26 versions. Commit to `main`.
+3. Render automatically deploys from GitHub. Wait until **Live**.
+4. Open https://monster-realm-v26-online.onrender.com/health and verify `"edition":"V27"`.
+5. Then use the separate V27 game ZIP on CrazyGames Preview.
 
-1. Create a GitHub repository, e.g. `monster-realm-v26-server`, and upload these four files to its root:
-   `server.mjs`, `ws-lite.mjs`, `package.json`, `render.yaml`.
-2. Connect the repository to Render (or give its URL to ChatGPT to create the service).
-3. Use `Web Service`, runtime `Node`, region `Singapore`, plan `Free`, build command `echo "No external dependencies"`, start command `node server.mjs`.
-4. Environment variable: `DATA_FILE=/tmp/monster-realm-test/players.json`.
-5. Wait for `Live`. Open the actual `https://YOUR-APP.onrender.com/health`, which should return `{ "ok": true, ... }`.
-6. Provide that *public HTTPS URL only* to ChatGPT. Do not send account passwords or tokens.
-7. ChatGPT will create a CrazyGames V26 game ZIP with its `backend-config.js` pointing to the live URL.
-8. Test two browser sessions on the CrazyGames Preview page, with three monsters in each team.
+### PvP rules
 
-## Important free-tier warning
+- A room starts with one host waiting; the 30-second server-controlled timer starts when a second player joins.
+- Each player has **3 team slots**; choose monsters from up to 500 owned creatures.
+- The server rejects duplicate selections, late selections, and attacks before the prep timer ends.
+- Time ends: teams lock and real turn-based attacks begin automatically.
+- Monster reaches 0 HP: next creature enters. Defeat all 3: win.
+- Skill 1 has no cooldown; skills 2–9 use a 3-turn cooldown.
+- Rematch opens a new 30-second selection period.
+- Works through both room ID and accepted friend challenge.
 
-- Render sleeps after 15 minutes with no inbound traffic/WebSocket messages, and waking may take a minute.
-- Free Web Services **do not have persistent disks**. Accounts, friendship data and local player files are lost on redeploy/restart/sleep. **Use disposable TEST names/passwords**.
-- Game progress is saved separately through CrazyGames SDK/local browser, but online friend accounts on this test backend are temporary.
-- Only one instance is supported; this is **not production-ready** multiplayer infrastructure.
-- Never change `plan: free` to `starter` or add a `disk` unless you agree to paying.
-
-Node 20+; no external npm dependencies are needed. Live PvP rooms, rematch, profile, friend invites and cooldowns are in `server.mjs`.
+⚠ Render Free hosts use ephemeral files and may restart/sleep. This is a test deployment, not durable account storage.

@@ -79,6 +79,8 @@ function push(id,msg){
 function roomPublic(room){
   return{
     roomId:room.roomId,roomName:room.roomName,
+    phase:room.phase||"waiting",prepEndsAt:room.prepEndsAt||null,serverNow:Date.now(),
+    selectedIndices:room.selectedIndices||{},
     players:room.players.map(id=>{
       const p=db.players[id],team=room.teams[id]||[];
       return{id:p.id,name:p.name,avatar:p.avatar||1,team};
@@ -111,6 +113,61 @@ function sanitizeMonster(m){
   };
 }
 function sanitizeTeam(team){return(Array.isArray(team)?team:[]).slice(0,3).map(sanitizeMonster)}
+function sanitizeRoster(roster,team){
+ const result=(Array.isArray(roster)?roster:[]).slice(0,500).map(sanitizeMonster);
+ // Older game clients can still connect using the active battle trio.
+ return result.length>=3?result:sanitizeTeam(team);
+}
+function initialSlots(roster,team){
+ const used=new Set();
+ return team.slice(0,3).map(m=>{
+   let index=roster.findIndex((r,i)=>!used.has(i)&&r.name===m.name&&r.level===m.level&&r.img===m.img);
+   if(index<0)index=roster.findIndex((r,i)=>!used.has(i));
+   used.add(index);return index;
+ });
+}
+function createRoomData(roomName,owner,team,roster){
+ const roomId=randomRoomId(),safeRoster=sanitizeRoster(roster,team);
+ return {roomId,roomName,roomNameKey:keyName(roomName),ownerId:owner,
+  players:[owner],teams:{[owner]:team},rosters:{[owner]:safeRoster},
+  selectedIndices:{[owner]:initialSlots(safeRoster,team)},phase:"waiting",prepEndsAt:null,battle:null,prepTimer:null};
+}
+// The server owns the clock. Clients cannot reset or lengthen the 30-second window.
+function startPreparation(room){
+ if(room.players.length!==2||room.phase!=="waiting")return;
+ if(room.players.some(id=>(room.teams[id]||[]).length!==3))return;
+ room.phase="select";room.prepEndsAt=Date.now()+30000;
+ room.prepTimer=setTimeout(()=>finishPreparation(room.roomId),30000);
+ broadcastRoom(room,"room_update");
+}
+function finishPreparation(roomId){
+ const room=rooms.get(roomId);
+ if(!room||room.phase!=="select")return;
+ if(Date.now()<room.prepEndsAt){
+   clearTimeout(room.prepTimer);room.prepTimer=setTimeout(()=>finishPreparation(roomId),room.prepEndsAt-Date.now());return;
+ }
+ room.phase="battle";room.prepTimer=null;resetBattle(room,1);broadcastRoom(room,"pvp_state");
+}
+function handlePvpPick(playerId,msg){
+ const room=rooms.get(String(msg.roomId||""));
+ if(!room||!room.players.includes(playerId))return;
+ if(room.phase!=="select"||Date.now()>=room.prepEndsAt){
+   if(room.phase==="select")finishPreparation(room.roomId);
+   push(playerId,{type:"error",message:"Selection time is over. Battle is starting."});return;
+ }
+ const slot=Number(msg.slot),rosterIndex=Number(msg.rosterIndex);
+ const roster=room.rosters[playerId]||[],slots=room.selectedIndices[playerId]||[];
+ if(!Number.isInteger(slot)||slot<0||slot>2||!Number.isInteger(rosterIndex)||rosterIndex<0||rosterIndex>=roster.length){
+  push(playerId,{type:"error",message:"Invalid monster selection."});return;
+ }
+ if(slots.some((v,i)=>i!==slot&&v===rosterIndex)){
+  push(playerId,{type:"error",message:"A monster cannot occupy two team slots."});return;
+ }
+ slots[slot]=rosterIndex;
+ room.teams[playerId]=slots.map(i=>roster[i]);
+ broadcastRoom(room,"room_update");
+}
+
 function relation(attacker,target){
   if(target?.type==="Titan"){
     if(target.titanDragon)return 1;
@@ -139,11 +196,7 @@ function resetBattle(room,round=1){
     cooldowns:{[a]:room.teams[a].map(()=>Array(9).fill(0)),[b]:room.teams[b].map(()=>Array(9).fill(0))}
   };
 }
-function startRoomIfReady(room){
-  if(room.players.length!==2)return;
-  if(room.players.some(id=>(room.teams[id]||[]).length!==3))return;
-  resetBattle(room,1);broadcastRoom(room);
-}
+function startRoomIfReady(room){startPreparation(room)}
 function findRoomForPlayer(id){
   for(const room of rooms.values())if(room.players.includes(id))return room;
   return null;
@@ -156,7 +209,7 @@ function beginNextPvpTurn(room,playerId){
   }
 }
 function handlePvpAction(playerId,msg){
-  const room=rooms.get(String(msg.roomId||""));if(!room||!room.battle)return;
+  const room=rooms.get(String(msg.roomId||""));if(!room||room.phase!=="battle"||!room.battle)return;
   const b=room.battle;if(b.winner||b.turn!==playerId)return;
   const other=room.players.find(id=>id!==playerId);if(!other)return;
   const ai=b.active[playerId]||0,di=b.active[other]||0,att=room.teams[playerId][ai],def=room.teams[other][di];
@@ -188,20 +241,23 @@ function handleRematch(playerId,msg){
   const room=rooms.get(String(msg.roomId||""));if(!room?.battle?.winner)return;
   room.battle.rematchReady.add(playerId);broadcastRoom(room);
   if(room.battle.rematchReady.size===2){
-    const round=room.battle.round+1;resetBattle(room,round);broadcastRoom(room);
+    // A rematch reopens a fresh 30-second team selection, not an instant attack.
+    room.battle=null;room.phase="waiting";room.prepEndsAt=null;
+    startPreparation(room);
   }
 }
 function leaveRoom(playerId,roomId){
   const room=rooms.get(String(roomId||""))||findRoomForPlayer(playerId);if(!room)return;
   if(!room.players.includes(playerId))return;
   room.players.filter(id=>id!==playerId).forEach(id=>push(id,{type:"room_closed"}));
+  if(room.prepTimer)clearTimeout(room.prepTimer);
   rooms.delete(room.roomId);
 }
 
 const server=http.createServer(async(req,res)=>{
   if(req.method==="OPTIONS"){sendJson(res,200,{ok:true});return}
-  if(req.method==="GET"&&req.url.split("?")[0]==="/health"){sendJson(res,200,{ok:true,edition:"V26",mode:"Render Free test",rooms:rooms.size,players:Object.keys(db.players).length});return}
-  if(req.method==="GET"&&req.url.split("?")[0]==="/"){sendJson(res,200,{ok:true,service:"Monster Realm V26 PvP server",mode:"test",help:"This URL is a backend API, not the playable CrazyGames website. Try /health."});return}
+  if(req.method==="GET"&&req.url.split("?")[0]==="/health"){sendJson(res,200,{ok:true,edition:"V27",mode:"Render Free test",rooms:rooms.size,players:Object.keys(db.players).length});return}
+  if(req.method==="GET"&&req.url.split("?")[0]==="/"){sendJson(res,200,{ok:true,service:"Monster Realm V27 PvP server",mode:"test",help:"This URL is a backend API, not the playable CrazyGames website. Try /health."});return}
   if(req.method==="GET"||req.method==="HEAD"){serveGame(req,res);return}
   if(req.method!=="POST"){sendJson(res,404,{ok:false,error:"Not found"});return}
   let body={};try{body=await readJson(req)}catch(e){sendJson(res,400,{ok:false,error:"Invalid JSON"});return}
@@ -263,9 +319,9 @@ const server=http.createServer(async(req,res)=>{
       const old=findRoomForPlayer(p.id);if(old)leaveRoom(p.id,old.roomId);
       const team=sanitizeTeam(body.team);
       if(team.length!==3)throw new Error("Online PvP requires exactly 3 monsters.");
-      const roomName=String(body.roomName||"crazy").trim().slice(0,24)||"crazy",roomId=randomRoomId();
-      const room={roomId,roomName,roomNameKey:keyName(roomName),ownerId:p.id,players:[p.id],teams:{[p.id]:team},battle:null};
-      rooms.set(roomId,room);sendJson(res,200,{ok:true,room:roomPublic(room)});push(p.id,{type:"room_update",room:roomPublic(room)});return;
+      const roomName=String(body.roomName||"crazy").trim().slice(0,24)||"crazy";
+      const room=createRoomData(roomName,p.id,team,body.roster);
+      rooms.set(room.roomId,room);sendJson(res,200,{ok:true,room:roomPublic(room)});push(p.id,{type:"room_update",room:roomPublic(room)});return;
     }
     if(url==="/api/rooms/join"){
       const room=rooms.get(String(body.roomId||""));if(!room)throw new Error("Room ID not found.");
@@ -275,15 +331,20 @@ const server=http.createServer(async(req,res)=>{
       if(team.length!==3)throw new Error("Online PvP requires exactly 3 monsters.");
       const existing=findRoomForPlayer(p.id);
       if(existing&&existing.roomId!==room.roomId)leaveRoom(p.id,existing.roomId);
-      if(!room.players.includes(p.id))room.players.push(p.id);room.teams[p.id]=team;
-      startRoomIfReady(room);sendJson(res,200,{ok:true,room:roomPublic(room)});if(!room.battle)broadcastRoom(room,"room_update");return;
+      if(room.phase!=="waiting")throw new Error("Match is already preparing or in progress.");
+      if(!room.players.includes(p.id))room.players.push(p.id);
+      const roster=sanitizeRoster(body.roster,team);
+      room.teams[p.id]=team;room.rosters[p.id]=roster;room.selectedIndices[p.id]=initialSlots(roster,team);
+      startRoomIfReady(room);
+      sendJson(res,200,{ok:true,room:roomPublic(room)});
+      if(room.phase==="waiting")broadcastRoom(room,"room_update");return;
     }
     if(url==="/api/challenge/send"){
       const target=db.players[String(body.targetId||"")];if(!target||!p.friends.includes(target.id))throw new Error("Friend not found.");
       if(!isOnline(target.id))throw new Error("Friend is offline.");
       const team=sanitizeTeam(body.team);
       if(team.length!==3)throw new Error("Online PvP requires exactly 3 monsters.");
-      const challengeId=crypto.randomUUID(),c={challengeId,from:p.id,to:target.id,team,createdAt:Date.now()};challenges.set(challengeId,c);
+      const challengeId=crypto.randomUUID(),c={challengeId,from:p.id,to:target.id,team,roster:sanitizeRoster(body.roster,team),createdAt:Date.now()};challenges.set(challengeId,c);
       push(target.id,{type:"challenge",challengeId,from:{id:p.id,name:p.name,avatar:p.avatar}});
       sendJson(res,200,{ok:true});return;
     }
@@ -295,9 +356,12 @@ const server=http.createServer(async(req,res)=>{
       const oldFrom=findRoomForPlayer(from.id),oldTo=findRoomForPlayer(p.id);
       if(oldFrom)leaveRoom(from.id,oldFrom.roomId);
       if(oldTo)leaveRoom(p.id,oldTo.roomId);
-      const roomId=randomRoomId(),roomName="friends";
-      const room={roomId,roomName,roomNameKey:keyName(roomName),ownerId:from.id,players:[from.id,p.id],teams:{[from.id]:c.team,[p.id]:team},battle:null};
-      rooms.set(roomId,room);challenges.delete(c.challengeId);startRoomIfReady(room);sendJson(res,200,{ok:true,room:roomPublic(room)});return;
+      const roomName="friends",room=createRoomData(roomName,from.id,c.team,c.roster);
+      const roster=sanitizeRoster(body.roster,team);
+      room.players.push(p.id);room.teams[p.id]=team;room.rosters[p.id]=roster;
+      room.selectedIndices[p.id]=initialSlots(roster,team);
+      rooms.set(room.roomId,room);challenges.delete(c.challengeId);startRoomIfReady(room);
+      sendJson(res,200,{ok:true,room:roomPublic(room)});return;
     }
     if(url==="/api/challenge/decline"){challenges.delete(String(body.challengeId||""));sendJson(res,200,{ok:true});return}
     throw new Error("Unknown endpoint.");
@@ -316,6 +380,7 @@ wss.on("connection",(ws,req)=>{
   ws.on("message",raw=>{
     try{
       const msg=JSON.parse(String(raw));
+      if(msg.type==="pvp_pick")handlePvpPick(p.id,msg);
       if(msg.type==="pvp_action")handlePvpAction(p.id,msg);
       if(msg.type==="pvp_rematch")handleRematch(p.id,msg);
       if(msg.type==="room_leave")leaveRoom(p.id,msg.roomId);
@@ -326,4 +391,4 @@ wss.on("connection",(ws,req)=>{
   });
 });
 
-server.listen(PORT,"0.0.0.0",()=>console.log(`Monster Realm V26 ONLINE listening on port ${PORT}`));
+server.listen(PORT,"0.0.0.0",()=>console.log(`Monster Realm V27 ONLINE listening on port ${PORT}`));

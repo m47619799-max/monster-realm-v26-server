@@ -1,6 +1,6 @@
 {
-  "name": "monster-realm-v26-guest-play",
-  "version": "26.0.0",
+  "name": "monster-realm-v27-pvp-30s",
+  "version": "27.0.0",
   "private": true,
   "type": "module",
   "scripts": {"start": "node server.mjs"},
